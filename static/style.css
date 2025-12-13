@@ -436,6 +436,14 @@ header h1 {
     touch-action: pan-y pinch-zoom;
 }
 
+.viewer-header {
+    width: 100%;
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.8);
+    text-align: center;
+    flex-shrink: 0;
+}
+
 .media-viewer.hidden {
     display: none;
 }
@@ -465,11 +473,11 @@ header h1 {
 
 .viewer-content {
     width: 100%;
-    height: 100%;
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem;
+    padding: 1rem;
     overflow: auto;
 }
 
@@ -484,27 +492,20 @@ header h1 {
     max-height: 80vh;
 }
 
-.viewer-info {
-    position: absolute;
-    bottom: 7rem;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
-    padding: 0.75rem 1.5rem;
-    border-radius: 5px;
-    text-align: center;
-}
-
 .creation-time {
     color: white;
     font-size: 0.9rem;
+    padding: 0.5rem 0;
 }
 
 .viewer-nav {
-    position: absolute;
-    bottom: 2rem;
+    width: 100%;
+    padding: 1rem;
     display: flex;
+    justify-content: center;
     gap: 1rem;
+    flex-shrink: 0;
+    background: rgba(0, 0, 0, 0.8);
 }
 
 .nav-btn {
@@ -655,9 +656,8 @@ header h1 {
 }
 
 @media (max-width: 768px) {
-    .viewer-info {
-        bottom: 5rem;
-        padding: 0.5rem 1rem;
+    .viewer-header {
+        padding: 0.75rem;
     }
     
     .creation-time {
@@ -665,7 +665,7 @@ header h1 {
     }
     
     .viewer-nav {
-        bottom: 1rem;
+        padding: 0.75rem;
     }
     
     .nav-btn {
@@ -675,7 +675,7 @@ header h1 {
     }
     
     .viewer-content {
-        padding: 1rem;
+        padding: 0.5rem;
     }
     
     .header-actions {

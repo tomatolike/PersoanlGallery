@@ -871,5 +871,5 @@ if __name__ == '__main__':
     print(f"Admin username: {ADMIN_USERNAME}")
     
     # Run app with configured port
-    app.run(debug=True, host='0.0.0.0', port=CONFIG['server']['port'])
+    app.run(debug=False, host='0.0.0.0', port=CONFIG['server']['port'])
 
