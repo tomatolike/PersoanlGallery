@@ -242,6 +242,8 @@ def scan_media_directory():
         added_count = 0
         updated_count = 0
         for file_path in media_dir.rglob('*'):
+            if added_count + updated_count > 100:
+                break
             if file_path.is_file() and allowed_file(file_path.name):
                 filepath_str = str(file_path)
                 media_type = get_media_type(file_path.name)
@@ -831,9 +833,6 @@ if __name__ == '__main__':
     # Start periodic scanning in background thread (after DB is initialized)
     scan_thread = threading.Thread(target=periodic_scan, daemon=True)
     scan_thread.start()
-    
-    # Initial scan on startup
-    scan_media_directory()
     
     # Print configuration info
     print(f"Configuration loaded from {CONFIG_FILE}")
