@@ -329,12 +329,15 @@ def scan_media_directory():
             if updated_count > 0:
                 msg += f" Regenerated {updated_count} thumbnails."
             print(msg)
+    return total_added
 
 def periodic_scan():
     """Periodically scan the media directory"""
     while True:
-        scan_media_directory()
-        time.sleep(app.config['SCAN_INTERVAL'])
+        if scan_media_directory() == 0:
+            time.sleep(app.config['SCAN_INTERVAL'])
+        else:
+            time.sleep(10)
 
 # Note: Scan initialization moved to if __name__ == '__main__' block
 # after database initialization
