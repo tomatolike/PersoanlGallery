@@ -333,8 +333,8 @@ def scan_media_directory():
 def periodic_scan():
     """Periodically scan the media directory"""
     while True:
-        time.sleep(app.config['SCAN_INTERVAL'])
         scan_media_directory()
+        time.sleep(app.config['SCAN_INTERVAL'])
 
 # Note: Scan initialization moved to if __name__ == '__main__' block
 # after database initialization
