@@ -484,6 +484,22 @@ header h1 {
     max-height: 80vh;
 }
 
+.viewer-info {
+    position: absolute;
+    bottom: 7rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    padding: 0.75rem 1.5rem;
+    border-radius: 5px;
+    text-align: center;
+}
+
+.creation-time {
+    color: white;
+    font-size: 0.9rem;
+}
+
 .viewer-nav {
     position: absolute;
     bottom: 2rem;
@@ -639,6 +655,15 @@ header h1 {
 }
 
 @media (max-width: 768px) {
+    .viewer-info {
+        bottom: 5rem;
+        padding: 0.5rem 1rem;
+    }
+    
+    .creation-time {
+        font-size: 0.8rem;
+    }
+    
     .viewer-nav {
         bottom: 1rem;
     }

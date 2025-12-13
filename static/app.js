@@ -427,6 +427,22 @@ function openViewer(index) {
     const viewer = document.getElementById('mediaViewer');
     const viewerImage = document.getElementById('viewerImage');
     const viewerVideo = document.getElementById('viewerVideo');
+    const viewerCreationTime = document.getElementById('viewerCreationTime');
+    
+    // Display creation time
+    if (item.created_at) {
+        const date = new Date(item.created_at);
+        const formattedDate = date.toLocaleString('default', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        viewerCreationTime.textContent = formattedDate;
+    } else {
+        viewerCreationTime.textContent = '';
+    }
     
     if (item.file_type === 'image') {
         viewerImage.src = `/api/media/${item.id}`;
