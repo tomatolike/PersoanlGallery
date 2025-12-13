@@ -25,8 +25,10 @@ def load_config():
         config = json.load(f)
     
     # Validate required fields
-    if 'users' not in config:
-        raise ValueError("Configuration must contain 'users' field")
+    if 'admin' not in config:
+        raise ValueError("Configuration must contain 'admin' field")
+    if 'username' not in config['admin'] or 'password' not in config['admin']:
+        raise ValueError("Admin configuration must have 'username' and 'password' fields")
     if 'server' not in config or 'port' not in config['server']:
         raise ValueError("Configuration must contain 'server.port' field")
     if 'storage' not in config:
@@ -39,12 +41,14 @@ def load_config():
 # Load configuration
 CONFIG = load_config()
 
-# Build user dictionary for authentication
-USERS = {}
-for user in CONFIG['users']:
-    if 'username' not in user or 'password' not in user:
-        raise ValueError("Each user in configuration must have 'username' and 'password' fields")
-    USERS[user['username']] = user['password']
+# Admin credentials from config
+if 'admin' not in CONFIG:
+    raise ValueError("Configuration must contain 'admin' field with username and password")
+if 'username' not in CONFIG['admin'] or 'password' not in CONFIG['admin']:
+    raise ValueError("Admin configuration must have 'username' and 'password' fields")
+
+ADMIN_USERNAME = CONFIG['admin']['username']
+ADMIN_PASSWORD = CONFIG['admin']['password']
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 app.config['SECRET_KEY'] = secrets.token_hex(32)
@@ -54,32 +58,62 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
 
-# Use paths from configuration (resolve relative paths)
-media_path = CONFIG['storage']['media_path']
-thumbnail_path = CONFIG['storage']['thumbnail_path']
+# Helper function to get user-specific storage paths
+def get_user_storage_paths(username, base_media_path, base_thumbnail_path):
+    """Get storage paths for a specific user, replacing {username} placeholder"""
+    media_path = base_media_path.replace('{username}', username)
+    thumbnail_path = base_thumbnail_path.replace('{username}', username)
+    
+    # Convert relative paths to absolute paths
+    if not os.path.isabs(media_path):
+        media_path = os.path.abspath(os.path.join(os.path.dirname(__file__), media_path))
+    if not os.path.isabs(thumbnail_path):
+        thumbnail_path = os.path.abspath(os.path.join(os.path.dirname(__file__), thumbnail_path))
+    
+    return media_path, thumbnail_path
 
-# Convert relative paths to absolute paths
-if not os.path.isabs(media_path):
-    media_path = os.path.abspath(os.path.join(os.path.dirname(__file__), media_path))
-if not os.path.isabs(thumbnail_path):
-    thumbnail_path = os.path.abspath(os.path.join(os.path.dirname(__file__), thumbnail_path))
+# Use paths from configuration (base paths with {username} placeholder)
+base_media_path = CONFIG['storage']['media_path']
+base_thumbnail_path = CONFIG['storage']['thumbnail_path']
 
-app.config['UPLOAD_FOLDER'] = media_path
-app.config['THUMBNAIL_FOLDER'] = thumbnail_path
+app.config['BASE_MEDIA_PATH'] = base_media_path
+app.config['BASE_THUMBNAIL_PATH'] = base_thumbnail_path
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
 app.config['SCAN_INTERVAL'] = 300  # 5 minutes
 
 Session(app)
 
-# Ensure directories exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['THUMBNAIL_FOLDER'], exist_ok=True)
+# Helper function to ensure user directories exist
+def ensure_user_directories(username):
+    """Create media and thumbnail directories for a user if they don't exist"""
+    media_path, thumbnail_path = get_user_storage_paths(username, base_media_path, base_thumbnail_path)
+    os.makedirs(media_path, exist_ok=True)
+    os.makedirs(thumbnail_path, exist_ok=True)
+
+# Ensure admin directories exist
+ensure_user_directories(ADMIN_USERNAME)
+
+# Ensure directories exist for all existing users in database
+conn = sqlite3.connect('gallery.db')
+c = conn.cursor()
+c.execute('SELECT username FROM users')
+for row in c.fetchall():
+    ensure_user_directories(row[0])
+conn.close()
 
 # Database setup
 def init_db():
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
-    # Users table removed - now using config file for authentication
+    
+    # Users table for normal users (admin is in config)
+    c.execute('''CREATE TABLE IF NOT EXISTS users
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  username TEXT UNIQUE NOT NULL,
+                  password_hash TEXT NOT NULL,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+    
+    # Media table with owner
     c.execute('''CREATE TABLE IF NOT EXISTS media
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   filename TEXT NOT NULL,
@@ -88,7 +122,24 @@ def init_db():
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   size INTEGER,
-                  thumbnail_path TEXT)''')
+                  thumbnail_path TEXT,
+                  owner_username TEXT NOT NULL)''')
+    
+    # Add owner_username column if it doesn't exist (for migration)
+    try:
+        c.execute('ALTER TABLE media ADD COLUMN owner_username TEXT')
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
+    # Shares table to track gallery sharing
+    c.execute('''CREATE TABLE IF NOT EXISTS shares
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  owner_username TEXT NOT NULL,
+                  shared_with_username TEXT NOT NULL,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  UNIQUE(owner_username, shared_with_username))''')
+    
     conn.commit()
     conn.close()
 
@@ -138,42 +189,67 @@ def generate_thumbnail(filepath, media_type, output_path):
         return False
 
 def scan_media_directory():
-    """Scan the media directory for files and add them to database"""
-    media_dir = Path(app.config['UPLOAD_FOLDER'])
+    """Scan all user media directories for files and add them to database"""
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
     
-    added_count = 0
-    for file_path in media_dir.rglob('*'):
-        if file_path.is_file() and allowed_file(file_path.name):
-            filepath_str = str(file_path)
-            # Check if already in database
-            c.execute('SELECT id FROM media WHERE filepath = ?', (filepath_str,))
-            if c.fetchone() is None:
-                media_type = get_media_type(file_path.name)
-                if media_type:
-                    # Get file stats
-                    stat = file_path.stat()
-                    size = stat.st_size
-                    created_at = datetime.fromtimestamp(stat.st_mtime)
-                    
-                    # Generate thumbnail path
-                    thumbnail_filename = f"{file_path.stem}_thumb.jpg"
-                    thumbnail_path = os.path.join(app.config['THUMBNAIL_FOLDER'], thumbnail_filename)
-                    
-                    # Generate thumbnail if it doesn't exist
-                    if not os.path.exists(thumbnail_path):
-                        generate_thumbnail(filepath_str, media_type, thumbnail_path)
-                    
-                    # Add to database
-                    c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path)
-                                 VALUES (?, ?, ?, ?, ?, ?)''',
-                             (file_path.name, filepath_str, media_type, created_at, size, thumbnail_path))
-                    added_count += 1
+    # Get all usernames (admin + database users)
+    usernames = [ADMIN_USERNAME]
+    c.execute('SELECT username FROM users')
+    for row in c.fetchall():
+        usernames.append(row[0])
+    
+    total_added = 0
+    # Scan each user's directory
+    for username in usernames:
+        media_path, thumbnail_path = get_user_storage_paths(
+            username, 
+            app.config['BASE_MEDIA_PATH'], 
+            app.config['BASE_THUMBNAIL_PATH']
+        )
+        
+        media_dir = Path(media_path)
+        if not media_dir.exists():
+            continue
+            
+        added_count = 0
+        for file_path in media_dir.rglob('*'):
+            if file_path.is_file() and allowed_file(file_path.name):
+                filepath_str = str(file_path)
+                # Check if already in database
+                c.execute('SELECT id FROM media WHERE filepath = ?', (filepath_str,))
+                if c.fetchone() is None:
+                    media_type = get_media_type(file_path.name)
+                    if media_type:
+                        # Get file stats
+                        stat = file_path.stat()
+                        size = stat.st_size
+                        created_at = datetime.fromtimestamp(stat.st_mtime)
+                        
+                        # Generate thumbnail path
+                        thumbnail_filename = f"{file_path.stem}_thumb.jpg"
+                        user_thumbnail_path = os.path.join(thumbnail_path, thumbnail_filename)
+                        
+                        # Ensure thumbnail directory exists
+                        os.makedirs(thumbnail_path, exist_ok=True)
+                        
+                        # Generate thumbnail if it doesn't exist
+                        if not os.path.exists(user_thumbnail_path):
+                            generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
+                        
+                        # Add to database with owner
+                        c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
+                                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                                 (file_path.name, filepath_str, media_type, created_at, size, user_thumbnail_path, username))
+                        added_count += 1
+        total_added += added_count
+        if added_count > 0:
+            print(f"Scan completed for {username}. Added {added_count} new media files.")
     
     conn.commit()
     conn.close()
-    print(f"Scan completed. Added {added_count} new media files.")
+    if total_added > 0:
+        print(f"Total scan completed. Added {total_added} new media files.")
 
 def periodic_scan():
     """Periodically scan the media directory"""
@@ -201,12 +277,30 @@ def login():
     if not username or not password:
         return jsonify({'error': 'Username and password required'}), 400
     
-    # Authenticate against config file users
-    if username in USERS and USERS[username] == password:
-        session['user_id'] = username  # Use username as ID since we're not using DB for users
+    # Check if admin
+    if username == ADMIN_USERNAME:
+        if password == ADMIN_PASSWORD:
+            session['user_id'] = username
+            session['username'] = username
+            session['is_admin'] = True
+            session.permanent = True
+            return jsonify({'success': True, 'username': username, 'is_admin': True})
+        else:
+            return jsonify({'error': 'Invalid username or password'}), 401
+    
+    # Check normal users in database
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    c.execute('SELECT password_hash FROM users WHERE username = ?', (username,))
+    user = c.fetchone()
+    conn.close()
+    
+    if user and check_password_hash(user[0], password):
+        session['user_id'] = username
         session['username'] = username
+        session['is_admin'] = False
         session.permanent = True
-        return jsonify({'success': True, 'username': username})
+        return jsonify({'success': True, 'username': username, 'is_admin': False})
     else:
         return jsonify({'error': 'Invalid username or password'}), 401
 
@@ -218,7 +312,11 @@ def logout():
 @app.route('/api/check-auth', methods=['GET'])
 def check_auth():
     if 'user_id' in session:
-        return jsonify({'authenticated': True, 'username': session.get('username')})
+        return jsonify({
+            'authenticated': True, 
+            'username': session.get('username'),
+            'is_admin': session.get('is_admin', False)
+        })
     return jsonify({'authenticated': False}), 401
 
 @app.route('/api/filter-options', methods=['GET'])
@@ -262,6 +360,20 @@ def get_media():
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
+    current_user = session['username']
+    owner_username = request.args.get('owner', current_user)  # Default to current user's gallery
+    
+    # Check if user has access to this gallery (owner or shared with)
+    if owner_username != current_user:
+        conn = sqlite3.connect('gallery.db')
+        c = conn.cursor()
+        c.execute('SELECT id FROM shares WHERE owner_username = ? AND shared_with_username = ?', 
+                  (owner_username, current_user))
+        if c.fetchone() is None:
+            conn.close()
+            return jsonify({'error': 'Access denied'}), 403
+        conn.close()
+    
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     year = request.args.get('year', type=int)
@@ -271,9 +383,9 @@ def get_media():
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
     
-    # Build WHERE clause for date filtering
-    where_clauses = []
-    params = []
+    # Build WHERE clause for owner and date filtering
+    where_clauses = ["owner_username = ?"]
+    params = [owner_username]
     
     if year is not None:
         where_clauses.append("strftime('%Y', created_at) = ?")
@@ -285,7 +397,7 @@ def get_media():
                 where_clauses.append("strftime('%d', created_at) = ?")
                 params.append(f"{day:02d}")
     
-    where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    where_clause = "WHERE " + " AND ".join(where_clauses)
     
     # Get total count
     c.execute(f'SELECT COUNT(*) FROM media {where_clause}', params)
@@ -294,7 +406,7 @@ def get_media():
     # Get paginated results
     offset = (page - 1) * per_page
     query_params = params + [per_page, offset]
-    c.execute(f'''SELECT id, filename, filepath, file_type, created_at, uploaded_at, size, thumbnail_path
+    c.execute(f'''SELECT id, filename, filepath, file_type, created_at, uploaded_at, size, thumbnail_path, owner_username
                  FROM media {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?''',
               query_params)
     
@@ -308,7 +420,8 @@ def get_media():
             'created_at': row[4],
             'uploaded_at': row[5],
             'size': row[6],
-            'thumbnail_path': row[7]
+            'thumbnail_path': row[7],
+            'owner_username': row[8]
         })
     
     conn.close()
@@ -318,7 +431,8 @@ def get_media():
         'total': total,
         'page': page,
         'per_page': per_page,
-        'total_pages': (total + per_page - 1) // per_page
+        'total_pages': (total + per_page - 1) // per_page,
+        'owner_username': owner_username
     })
 
 @app.route('/api/media/<int:media_id>', methods=['GET'])
@@ -326,16 +440,27 @@ def get_media_file(media_id):
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
+    current_user = session['username']
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
-    c.execute('SELECT filepath, file_type FROM media WHERE id = ?', (media_id,))
+    c.execute('SELECT filepath, file_type, owner_username FROM media WHERE id = ?', (media_id,))
     media = c.fetchone()
-    conn.close()
     
     if not media:
+        conn.close()
         return jsonify({'error': 'Media not found'}), 404
     
-    filepath, file_type = media
+    filepath, file_type, owner_username = media
+    
+    # Check access
+    if owner_username != current_user:
+        c.execute('SELECT id FROM shares WHERE owner_username = ? AND shared_with_username = ?', 
+                  (owner_username, current_user))
+        if c.fetchone() is None:
+            conn.close()
+            return jsonify({'error': 'Access denied'}), 403
+    
+    conn.close()
     return send_file(filepath)
 
 @app.route('/api/media/<int:media_id>/thumbnail', methods=['GET'])
@@ -343,21 +468,40 @@ def get_thumbnail(media_id):
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
+    current_user = session['username']
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
-    c.execute('SELECT thumbnail_path FROM media WHERE id = ?', (media_id,))
+    c.execute('SELECT thumbnail_path, owner_username FROM media WHERE id = ?', (media_id,))
     result = c.fetchone()
-    conn.close()
     
-    if not result or not result[0] or not os.path.exists(result[0]):
+    if not result:
+        conn.close()
         return jsonify({'error': 'Thumbnail not found'}), 404
     
-    return send_file(result[0])
+    thumbnail_path, owner_username = result
+    
+    # Check access
+    if owner_username != current_user:
+        c.execute('SELECT id FROM shares WHERE owner_username = ? AND shared_with_username = ?', 
+                  (owner_username, current_user))
+        if c.fetchone() is None:
+            conn.close()
+            return jsonify({'error': 'Access denied'}), 403
+    
+    conn.close()
+    
+    if not thumbnail_path or not os.path.exists(thumbnail_path):
+        return jsonify({'error': 'Thumbnail not found'}), 404
+    
+    return send_file(thumbnail_path)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_files():
     if 'user_id' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Users can only upload to their own gallery
+    current_user = session['username']
     
     if 'files' not in request.files:
         return jsonify({'error': 'No files provided'}), 400
@@ -366,6 +510,17 @@ def upload_files():
     
     if len(files) > 10:
         return jsonify({'error': 'Maximum 10 files allowed per upload'}), 400
+    
+    # Get user-specific storage paths
+    media_path, thumbnail_path = get_user_storage_paths(
+        current_user,
+        app.config['BASE_MEDIA_PATH'],
+        app.config['BASE_THUMBNAIL_PATH']
+    )
+    
+    # Ensure directories exist
+    os.makedirs(media_path, exist_ok=True)
+    os.makedirs(thumbnail_path, exist_ok=True)
     
     uploaded_files = []
     conn = sqlite3.connect('gallery.db')
@@ -379,14 +534,14 @@ def upload_files():
             continue
         
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        filepath = os.path.join(media_path, filename)
         
         # Handle duplicate filenames
         counter = 1
         base_name, ext = os.path.splitext(filename)
         while os.path.exists(filepath):
             filename = f"{base_name}_{counter}{ext}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            filepath = os.path.join(media_path, filename)
             counter += 1
         
         try:
@@ -398,13 +553,13 @@ def upload_files():
             
             # Generate thumbnail
             thumbnail_filename = f"{os.path.splitext(filename)[0]}_thumb.jpg"
-            thumbnail_path = os.path.join(app.config['THUMBNAIL_FOLDER'], thumbnail_filename)
-            generate_thumbnail(filepath, media_type, thumbnail_path)
+            user_thumbnail_path = os.path.join(thumbnail_path, thumbnail_filename)
+            generate_thumbnail(filepath, media_type, user_thumbnail_path)
             
-            # Add to database
-            c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path)
-                         VALUES (?, ?, ?, ?, ?, ?)''',
-                     (filename, filepath, media_type, created_at, size, thumbnail_path))
+            # Add to database with owner
+            c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
+                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                     (filename, filepath, media_type, created_at, size, user_thumbnail_path, current_user))
             
             uploaded_files.append({
                 'filename': filename,
@@ -419,15 +574,211 @@ def upload_files():
     
     return jsonify({'success': True, 'uploaded': uploaded_files})
 
+@app.route('/api/galleries', methods=['GET'])
+def get_accessible_galleries():
+    """Get list of galleries the current user has access to (own + shared)"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    current_user = session['username']
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    galleries = [{'username': current_user, 'type': 'own'}]
+    
+    # Get galleries shared with current user
+    c.execute('SELECT owner_username FROM shares WHERE shared_with_username = ?', (current_user,))
+    for row in c.fetchall():
+        galleries.append({'username': row[0], 'type': 'shared'})
+    
+    conn.close()
+    
+    return jsonify({'galleries': galleries})
+
+@app.route('/api/share', methods=['POST'])
+def share_gallery():
+    """Share current user's gallery with another user"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    current_user = session['username']
+    data = request.json
+    share_with = data.get('username', '').strip()
+    
+    if not share_with:
+        return jsonify({'error': 'Username required'}), 400
+    
+    if share_with == current_user:
+        return jsonify({'error': 'Cannot share with yourself'}), 400
+    
+    # Check if user exists (admin or in database)
+    user_exists = False
+    if share_with == ADMIN_USERNAME:
+        user_exists = True
+    else:
+        conn_check = sqlite3.connect('gallery.db')
+        c_check = conn_check.cursor()
+        c_check.execute('SELECT id FROM users WHERE username = ?', (share_with,))
+        user_exists = c_check.fetchone() is not None
+        conn_check.close()
+    
+    if not user_exists:
+        return jsonify({'error': 'User not found'}), 404
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    # Check if already shared
+    c.execute('SELECT id FROM shares WHERE owner_username = ? AND shared_with_username = ?', 
+              (current_user, share_with))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Gallery already shared with this user'}), 400
+    
+    # Add share
+    c.execute('INSERT INTO shares (owner_username, shared_with_username) VALUES (?, ?)', 
+              (current_user, share_with))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': f'Gallery shared with {share_with}'})
+
+@app.route('/api/unshare', methods=['POST'])
+def unshare_gallery():
+    """Unshare current user's gallery with another user"""
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    current_user = session['username']
+    data = request.json
+    unshare_with = data.get('username', '').strip()
+    
+    if not unshare_with:
+        return jsonify({'error': 'Username required'}), 400
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    c.execute('DELETE FROM shares WHERE owner_username = ? AND shared_with_username = ?', 
+              (current_user, unshare_with))
+    
+    if c.rowcount == 0:
+        conn.close()
+        return jsonify({'error': 'Share not found'}), 404
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': f'Gallery unshared with {unshare_with}'})
+
+@app.route('/admin')
+def admin_page():
+    """Admin page route"""
+    return send_from_directory('static', 'admin.html')
+
+@app.route('/api/admin/users', methods=['GET'])
+def get_all_users():
+    """Get all users (admin only)"""
+    if 'user_id' not in session or not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    c.execute('SELECT id, username, created_at FROM users ORDER BY created_at DESC')
+    users = []
+    for row in c.fetchall():
+        users.append({
+            'id': row[0],
+            'username': row[1],
+            'created_at': row[2]
+        })
+    conn.close()
+    
+    return jsonify({'users': users})
+
+@app.route('/api/admin/users', methods=['POST'])
+def create_user():
+    """Create a new user (admin only)"""
+    if 'user_id' not in session or not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    # Validate username
+    if username == ADMIN_USERNAME:
+        return jsonify({'error': 'Username conflicts with admin username'}), 400
+    
+    if len(username) < 3:
+        return jsonify({'error': 'Username must be at least 3 characters'}), 400
+    
+    if len(password) < 4:
+        return jsonify({'error': 'Password must be at least 4 characters'}), 400
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    # Check if username already exists
+    c.execute('SELECT id FROM users WHERE username = ?', (username,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'error': 'Username already exists'}), 400
+    
+    # Create user
+    password_hash = generate_password_hash(password)
+    c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
+    conn.commit()
+    conn.close()
+    
+    # Create user directories
+    ensure_user_directories(username)
+    
+    return jsonify({'success': True, 'message': f'User {username} created successfully'})
+
+@app.route('/api/admin/users/<username>', methods=['DELETE'])
+def delete_user(username):
+    """Delete a user (admin only)"""
+    if 'user_id' not in session or not session.get('is_admin'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    if username == ADMIN_USERNAME:
+        return jsonify({'error': 'Cannot delete admin user'}), 400
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    # Check if user exists
+    c.execute('SELECT id FROM users WHERE username = ?', (username,))
+    if not c.fetchone():
+        conn.close()
+        return jsonify({'error': 'User not found'}), 404
+    
+    # Delete user's shares
+    c.execute('DELETE FROM shares WHERE owner_username = ? OR shared_with_username = ?', (username, username))
+    
+    # Delete user's media records (files remain on disk)
+    c.execute('DELETE FROM media WHERE owner_username = ?', (username,))
+    
+    # Delete user
+    c.execute('DELETE FROM users WHERE username = ?', (username,))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': f'User {username} deleted successfully'})
+
 if __name__ == '__main__':
     init_db()
     
     # Print configuration info
     print(f"Configuration loaded from {CONFIG_FILE}")
-    print(f"Media path: {app.config['UPLOAD_FOLDER']}")
-    print(f"Thumbnail path: {app.config['THUMBNAIL_FOLDER']}")
+    print(f"Base media path: {app.config['BASE_MEDIA_PATH']}")
+    print(f"Base thumbnail path: {app.config['BASE_THUMBNAIL_PATH']}")
     print(f"Server port: {CONFIG['server']['port']}")
-    print(f"Configured users: {', '.join(USERS.keys())}")
+    print(f"Admin username: {ADMIN_USERNAME}")
     
     # Run app with configured port
     app.run(debug=True, host='0.0.0.0', port=CONFIG['server']['port'])

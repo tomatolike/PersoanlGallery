@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Admin - Personal Gallery</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .admin-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .admin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+        
+        .admin-header h1 {
+            margin: 0;
+        }
+        
+        .admin-section {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .admin-section h2 {
+            margin-top: 0;
+            margin-bottom: 1rem;
+            color: var(--text-color);
+        }
+        
+        .user-form {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+        }
+        
+        .user-form input {
+            flex: 1;
+            min-width: 150px;
+            padding: 0.75rem;
+            border: 2px solid var(--border-color);
+            border-radius: 5px;
+            font-size: 1rem;
+        }
+        
+        .user-form input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+        
+        .user-form button {
+            padding: 0.75rem 1.5rem;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .user-form button:hover {
+            background-color: var(--hover-color);
+        }
+        
+        .users-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .user-item:last-child {
+            border-bottom: none;
+        }
+        
+        .user-info {
+            flex: 1;
+        }
+        
+        .user-info .username {
+            font-weight: 500;
+            color: var(--text-color);
+        }
+        
+        .user-info .created-at {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+        
+        .delete-btn {
+            padding: 0.5rem 1rem;
+            background-color: var(--error-color);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background-color 0.3s;
+        }
+        
+        .delete-btn:hover {
+            background-color: #c0392b;
+        }
+        
+        .message {
+            padding: 0.75rem;
+            border-radius: 5px;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <h1>Admin Panel</h1>
+            <div>
+                <button class="logout-btn" onclick="window.location.href='/'">Go to Gallery</button>
+                <button class="logout-btn" id="logoutBtn">Logout</button>
+            </div>
+        </div>
+
+        <div id="message" class="message hidden"></div>
+
+        <div class="admin-section">
+            <h2>Add New User</h2>
+            <form class="user-form" id="addUserForm">
+                <input type="text" id="newUsername" placeholder="Username" required autocomplete="off">
+                <input type="password" id="newPassword" placeholder="Password" required autocomplete="new-password">
+                <button type="submit">Add User</button>
+            </form>
+        </div>
+
+        <div class="admin-section">
+            <h2>Users</h2>
+            <div id="usersList">
+                <div class="empty-state">Loading users...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>
+

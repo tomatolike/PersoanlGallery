@@ -28,26 +28,24 @@ pip install -r requirements.txt
 cp config.example.json config.json
 ```
 
-4. Edit `config.json` to configure:
-   - **Users**: Add usernames and passwords in the `users` array
+4. Edit `config.json` to configure admin credentials:
+   - **Admin**: Set admin username and password
    - **Server Port**: Set the `server.port` value
-   - **Storage Paths**: Configure `storage.media_path` and `storage.thumbnail_path`
+   - **Storage Paths**: Configure `storage.media_path` and `storage.thumbnail_path` (use `{username}` placeholder)
    
    Example:
    ```json
    {
-     "users": [
-       {
-         "username": "admin",
-         "password": "your_secure_password"
-       }
-     ],
+     "admin": {
+       "username": "admin",
+       "password": "your_secure_password"
+     },
      "server": {
        "port": 5000
      },
      "storage": {
-       "media_path": "./media",
-       "thumbnail_path": "./thumbnails"
+       "media_path": "./media/{username}",
+       "thumbnail_path": "./thumbnails/{username}"
      }
    }
    ```
@@ -83,17 +81,27 @@ The application will be available at `http://localhost:<port>` (default: 5000)
 ## Database
 
 The application uses SQLite database (`gallery.db`) to store:
+- Normal user accounts (admin is configured in `config.json`)
 - Media file metadata (filename, path, type, creation time, etc.)
+- Gallery sharing relationships
 
-**Note**: User authentication is handled via the `config.json` file, not the database.
+**Note**: 
+- Admin user credentials are stored in `config.json`
+- Normal users are created through the admin panel and stored in the database
+- User directories are automatically created when users are added
 
 ## Configuration
 
 All configuration is done through the `config.json` file:
 
-- **Users**: Add/remove users by editing the `users` array in `config.json`
+- **Admin**: Configure admin username and password in `config.json`
 - **Server Port**: Change the `server.port` value in `config.json`
-- **Storage Paths**: Configure `storage.media_path` and `storage.thumbnail_path` in `config.json`
+- **Storage Paths**: Configure `storage.media_path` and `storage.thumbnail_path` in `config.json` (use `{username}` placeholder for per-user directories)
+
+**User Management**:
+- Admin users log in to access the admin panel (`/admin`)
+- Admin can create, view, and delete normal users through the admin panel
+- Normal users are stored in the database and their directories are automatically created
 
 Additional settings can be modified in `app.py`:
 - `SCAN_INTERVAL`: How often to scan for new media files (default: 300 seconds)

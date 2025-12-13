@@ -26,8 +26,18 @@
     <div id="galleryScreen" class="screen hidden">
         <header>
             <h1>Personal Gallery</h1>
-            <button id="logoutBtn" class="logout-btn">Logout</button>
+            <div class="header-actions">
+                <button id="shareBtn" class="share-btn">Share</button>
+                <button id="logoutBtn" class="logout-btn">Logout</button>
+            </div>
         </header>
+
+        <div class="gallery-selector-section">
+            <label for="gallerySelect">Viewing Gallery:</label>
+            <select id="gallerySelect" class="gallery-select">
+                <option value="">Loading...</option>
+            </select>
+        </div>
 
         <div class="upload-section">
             <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
@@ -55,6 +65,24 @@
         <div id="pagination" class="pagination"></div>
         
         <div id="loading" class="loading hidden">Loading...</div>
+    </div>
+
+    <!-- Share Modal -->
+    <div id="shareModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Share Gallery</h2>
+                <button class="modal-close" id="closeShareModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Share your gallery with another user:</p>
+                <div class="share-input-group">
+                    <input type="text" id="shareUsername" placeholder="Enter username" autocomplete="username">
+                    <button id="shareSubmitBtn" class="share-submit-btn">Share</button>
+                </div>
+                <div id="shareMessage" class="share-message"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Media Viewer -->

@@ -14,6 +14,8 @@ let availableFilterOptions = {
     months: [],
     days: []
 };
+let currentGalleryOwner = null; // Current user's username (their own gallery by default)
+let accessibleGalleries = [];
 
 // Check authentication on page load
 async function checkAuth() {
@@ -21,7 +23,13 @@ async function checkAuth() {
         const response = await fetch('/api/check-auth');
         const data = await response.json();
         if (data.authenticated) {
-            showGallery();
+            if (data.is_admin) {
+                // Redirect admin to admin panel
+                window.location.href = '/admin';
+            } else {
+                // Show gallery for normal users
+                showGallery();
+            }
         } else {
             showLogin();
         }
@@ -37,9 +45,21 @@ function showLogin() {
     document.getElementById('mediaViewer').classList.add('hidden');
 }
 
-function showGallery() {
+async function showGallery() {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('galleryScreen').classList.remove('hidden');
+    await loadAccessibleGalleries();
+    // Set current gallery owner to logged-in user initially
+    const authResponse = await fetch('/api/check-auth', { credentials: 'include' });
+    if (authResponse.ok) {
+        const authData = await authResponse.json();
+        currentGalleryOwner = authData.username;
+        updateGallerySelector();
+        
+        // Enable upload section (viewing own gallery)
+        const uploadSection = document.querySelector('.upload-section');
+        uploadSection.classList.remove('disabled');
+    }
     loadFilterOptions();
     loadMedia();
 }
@@ -66,7 +86,13 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
         const data = await response.json();
         
         if (response.ok && data.success) {
-            showGallery();
+            if (data.is_admin) {
+                // Redirect admin to admin panel
+                window.location.href = '/admin';
+            } else {
+                // Show gallery for normal users
+                showGallery();
+            }
         } else {
             errorDiv.textContent = data.error || 'Login failed';
         }
@@ -91,12 +117,45 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     }
 });
 
+// Load accessible galleries
+async function loadAccessibleGalleries() {
+    try {
+        const response = await fetch('/api/galleries', {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            accessibleGalleries = data.galleries;
+            updateGallerySelector();
+        }
+    } catch (error) {
+        console.error('Error loading accessible galleries:', error);
+    }
+}
+
+// Update gallery selector dropdown
+function updateGallerySelector() {
+    const selector = document.getElementById('gallerySelect');
+    selector.innerHTML = '';
+    
+    accessibleGalleries.forEach(gallery => {
+        const option = document.createElement('option');
+        option.value = gallery.username;
+        option.textContent = gallery.username + (gallery.type === 'own' ? ' (My Gallery)' : ' (Shared)');
+        if (gallery.username === currentGalleryOwner) {
+            option.selected = true;
+        }
+        selector.appendChild(option);
+    });
+}
+
 // Load filter options from API
 async function loadFilterOptions(year = null, month = null) {
     try {
-        let url = '/api/filter-options?';
+        let url = `/api/filter-options?owner=${currentGalleryOwner}`;
         if (year !== null) {
-            url += `year=${year}`;
+            url += `&year=${year}`;
             if (month !== null) {
                 url += `&month=${month}`;
             }
@@ -187,8 +246,8 @@ async function loadMedia(page = 1) {
     pagination.innerHTML = '';
     
     try {
-        // Build query string with filters
-        let url = `/api/media?page=${page}&per_page=20`;
+        // Build query string with filters and gallery owner
+        let url = `/api/media?page=${page}&per_page=20&owner=${currentGalleryOwner}`;
         if (currentFilters.year !== null) {
             url += `&year=${currentFilters.year}`;
             if (currentFilters.month !== null) {
@@ -477,7 +536,14 @@ fileInput.addEventListener('change', async (e) => {
             setTimeout(async () => {
                 await loadFilterOptions(currentFilters.year, currentFilters.month);
                 const pageToLoad = (currentFilters.year !== null || currentFilters.month !== null || currentFilters.day !== null) ? 1 : currentPage;
-                loadMedia(pageToLoad);
+                // Only reload if viewing own gallery (upload adds to own gallery)
+                const authResponse = await fetch('/api/check-auth', { credentials: 'include' });
+                if (authResponse.ok) {
+                    const authData = await authResponse.json();
+                    if (currentGalleryOwner === authData.username) {
+                        loadMedia(pageToLoad);
+                    }
+                }
                 uploadProgress.classList.add('hidden');
                 uploadProgress.style.color = '';
             }, 1500);
@@ -551,6 +617,108 @@ document.getElementById('clearFilters').addEventListener('click', async () => {
     await loadFilterOptions();
     loadMedia(1);
     window.scrollTo(0, 0);
+});
+
+// Gallery selector change handler
+document.getElementById('gallerySelect').addEventListener('change', async (e) => {
+    const newOwner = e.target.value;
+    if (newOwner && newOwner !== currentGalleryOwner) {
+        currentGalleryOwner = newOwner;
+        currentFilters.year = null;
+        currentFilters.month = null;
+        currentFilters.day = null;
+        document.getElementById('yearFilter').value = '';
+        document.getElementById('monthFilter').value = '';
+        document.getElementById('dayFilter').value = '';
+        currentPage = 1;
+        
+        // Update upload section visibility based on whether viewing own gallery
+        const authResponse = await fetch('/api/check-auth', { credentials: 'include' });
+        if (authResponse.ok) {
+            const authData = await authResponse.json();
+            const uploadSection = document.querySelector('.upload-section');
+            if (currentGalleryOwner === authData.username) {
+                uploadSection.classList.remove('disabled');
+            } else {
+                uploadSection.classList.add('disabled');
+            }
+        }
+        
+        await loadFilterOptions();
+        loadMedia(1);
+        window.scrollTo(0, 0);
+    }
+});
+
+// Share modal handlers
+const shareModal = document.getElementById('shareModal');
+const shareBtn = document.getElementById('shareBtn');
+const closeShareModal = document.getElementById('closeShareModal');
+const shareSubmitBtn = document.getElementById('shareSubmitBtn');
+const shareUsernameInput = document.getElementById('shareUsername');
+const shareMessage = document.getElementById('shareMessage');
+
+shareBtn.addEventListener('click', () => {
+    shareModal.classList.remove('hidden');
+    shareUsernameInput.value = '';
+    shareMessage.textContent = '';
+    shareMessage.className = 'share-message';
+});
+
+closeShareModal.addEventListener('click', () => {
+    shareModal.classList.add('hidden');
+});
+
+shareModal.addEventListener('click', (e) => {
+    if (e.target === shareModal) {
+        shareModal.classList.add('hidden');
+    }
+});
+
+shareSubmitBtn.addEventListener('click', async () => {
+    const username = shareUsernameInput.value.trim();
+    if (!username) {
+        shareMessage.textContent = 'Please enter a username';
+        shareMessage.className = 'share-message error';
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/share', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ username }),
+            credentials: 'include'
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            shareMessage.textContent = data.message || 'Gallery shared successfully!';
+            shareMessage.className = 'share-message success';
+            shareUsernameInput.value = '';
+            // Reload accessible galleries
+            await loadAccessibleGalleries();
+            setTimeout(() => {
+                shareModal.classList.add('hidden');
+            }, 2000);
+        } else {
+            shareMessage.textContent = data.error || 'Failed to share gallery';
+            shareMessage.className = 'share-message error';
+        }
+    } catch (error) {
+        console.error('Share error:', error);
+        shareMessage.textContent = 'Network error. Please try again.';
+        shareMessage.className = 'share-message error';
+    }
+});
+
+shareUsernameInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        shareSubmitBtn.click();
+    }
 });
 
 // Initialize
