@@ -249,12 +249,8 @@ def periodic_scan():
         time.sleep(app.config['SCAN_INTERVAL'])
         scan_media_directory()
 
-# Start periodic scanning in background thread
-scan_thread = threading.Thread(target=periodic_scan, daemon=True)
-scan_thread.start()
-
-# Initial scan on startup
-scan_media_directory()
+# Note: Scan initialization moved to if __name__ == '__main__' block
+# after database initialization
 
 @app.route('/')
 def index():
@@ -775,6 +771,13 @@ if __name__ == '__main__':
     except sqlite3.OperationalError:
         pass  # Table might not exist yet, but init_db() should have created it
     conn.close()
+    
+    # Start periodic scanning in background thread (after DB is initialized)
+    scan_thread = threading.Thread(target=periodic_scan, daemon=True)
+    scan_thread.start()
+    
+    # Initial scan on startup
+    scan_media_directory()
     
     # Print configuration info
     print(f"Configuration loaded from {CONFIG_FILE}")
