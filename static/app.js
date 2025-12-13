@@ -4,6 +4,16 @@ let currentPage = 1;
 let totalPages = 1;
 let currentMediaList = [];
 let currentViewerIndex = -1;
+let currentFilters = {
+    year: null,
+    month: null,
+    day: null
+};
+let availableFilterOptions = {
+    years: [],
+    months: [],
+    days: []
+};
 
 // Check authentication on page load
 async function checkAuth() {
@@ -30,6 +40,7 @@ function showLogin() {
 function showGallery() {
     document.getElementById('loginScreen').classList.add('hidden');
     document.getElementById('galleryScreen').classList.remove('hidden');
+    loadFilterOptions();
     loadMedia();
 }
 
@@ -80,6 +91,91 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
     }
 });
 
+// Load filter options from API
+async function loadFilterOptions(year = null, month = null) {
+    try {
+        let url = '/api/filter-options?';
+        if (year !== null) {
+            url += `year=${year}`;
+            if (month !== null) {
+                url += `&month=${month}`;
+            }
+        }
+        
+        const response = await fetch(url, {
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            availableFilterOptions = data;
+            populateFilterDropdowns();
+        }
+    } catch (error) {
+        console.error('Error loading filter options:', error);
+    }
+}
+
+// Populate filter dropdowns
+function populateFilterDropdowns() {
+    const yearSelect = document.getElementById('yearFilter');
+    const monthSelect = document.getElementById('monthFilter');
+    const daySelect = document.getElementById('dayFilter');
+    
+    // Populate years (keep current selection if valid)
+    const selectedYear = yearSelect.value;
+    yearSelect.innerHTML = '<option value="">Any Year</option>';
+    availableFilterOptions.years.forEach(year => {
+        const option = document.createElement('option');
+        option.value = year;
+        option.textContent = year;
+        if (selectedYear === year) {
+            option.selected = true;
+        }
+        yearSelect.appendChild(option);
+    });
+    
+    // Populate months (only if year is selected)
+    if (currentFilters.year !== null) {
+        monthSelect.disabled = false;
+        const selectedMonth = monthSelect.value;
+        monthSelect.innerHTML = '<option value="">Any Month</option>';
+        availableFilterOptions.months.forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = new Date(2000, month - 1, 1).toLocaleString('default', { month: 'long' });
+            if (selectedMonth === month.toString()) {
+                option.selected = true;
+            }
+            monthSelect.appendChild(option);
+        });
+    } else {
+        monthSelect.disabled = true;
+        monthSelect.innerHTML = '<option value="">Any Month</option>';
+        currentFilters.month = null;
+    }
+    
+    // Populate days (only if year and month are selected)
+    if (currentFilters.year !== null && currentFilters.month !== null) {
+        daySelect.disabled = false;
+        const selectedDay = daySelect.value;
+        daySelect.innerHTML = '<option value="">Any Day</option>';
+        availableFilterOptions.days.forEach(day => {
+            const option = document.createElement('option');
+            option.value = day;
+            option.textContent = day;
+            if (selectedDay === day.toString()) {
+                option.selected = true;
+            }
+            daySelect.appendChild(option);
+        });
+    } else {
+        daySelect.disabled = true;
+        daySelect.innerHTML = '<option value="">Any Day</option>';
+        currentFilters.day = null;
+    }
+}
+
 // Load media from API
 async function loadMedia(page = 1) {
     const gallery = document.getElementById('gallery');
@@ -91,7 +187,19 @@ async function loadMedia(page = 1) {
     pagination.innerHTML = '';
     
     try {
-        const response = await fetch(`/api/media?page=${page}&per_page=20`, {
+        // Build query string with filters
+        let url = `/api/media?page=${page}&per_page=20`;
+        if (currentFilters.year !== null) {
+            url += `&year=${currentFilters.year}`;
+            if (currentFilters.month !== null) {
+                url += `&month=${currentFilters.month}`;
+                if (currentFilters.day !== null) {
+                    url += `&day=${currentFilters.day}`;
+                }
+            }
+        }
+        
+        const response = await fetch(url, {
             credentials: 'include'
         });
         
@@ -122,7 +230,11 @@ function renderGallery(mediaList) {
     gallery.innerHTML = '';
     
     if (mediaList.length === 0) {
-        gallery.innerHTML = '<p style="text-align: center; padding: 2rem; grid-column: 1 / -1;">No media found. Upload some photos or videos to get started!</p>';
+        const hasFilters = currentFilters.year !== null || currentFilters.month !== null || currentFilters.day !== null;
+        const message = hasFilters 
+            ? 'No media found matching the selected filters. Try adjusting your filters or upload some photos or videos to get started!'
+            : 'No media found. Upload some photos or videos to get started!';
+        gallery.innerHTML = `<p style="text-align: center; padding: 2rem; grid-column: 1 / -1;">${message}</p>`;
         return;
     }
     
@@ -361,9 +473,11 @@ fileInput.addEventListener('change', async (e) => {
             uploadProgress.textContent = `Successfully uploaded ${data.uploaded.length} file(s)!`;
             uploadProgress.style.color = 'var(--success-color)';
             
-            // Reload gallery
-            setTimeout(() => {
-                loadMedia(currentPage);
+            // Reload filter options and gallery (maintain current page if no filters, otherwise reset to page 1)
+            setTimeout(async () => {
+                await loadFilterOptions(currentFilters.year, currentFilters.month);
+                const pageToLoad = (currentFilters.year !== null || currentFilters.month !== null || currentFilters.day !== null) ? 1 : currentPage;
+                loadMedia(pageToLoad);
                 uploadProgress.classList.add('hidden');
                 uploadProgress.style.color = '';
             }, 1500);
@@ -387,6 +501,56 @@ fileInput.addEventListener('change', async (e) => {
         uploadBtn.disabled = false;
         fileInput.value = '';
     }
+});
+
+// Filter event handlers
+document.getElementById('yearFilter').addEventListener('change', async (e) => {
+    const year = e.target.value ? parseInt(e.target.value) : null;
+    currentFilters.year = year;
+    currentFilters.month = null;
+    currentFilters.day = null;
+    // Clear month and day selects
+    document.getElementById('monthFilter').value = '';
+    document.getElementById('dayFilter').value = '';
+    currentPage = 1; // Reset to first page
+    await loadFilterOptions(year, null);
+    loadMedia(1);
+    window.scrollTo(0, 0);
+});
+
+document.getElementById('monthFilter').addEventListener('change', async (e) => {
+    if (!currentFilters.year) return;
+    const month = e.target.value ? parseInt(e.target.value) : null;
+    currentFilters.month = month;
+    currentFilters.day = null;
+    // Clear day select
+    document.getElementById('dayFilter').value = '';
+    currentPage = 1; // Reset to first page
+    await loadFilterOptions(currentFilters.year, month);
+    loadMedia(1);
+    window.scrollTo(0, 0);
+});
+
+document.getElementById('dayFilter').addEventListener('change', (e) => {
+    if (!currentFilters.year || !currentFilters.month) return;
+    const day = e.target.value ? parseInt(e.target.value) : null;
+    currentFilters.day = day;
+    currentPage = 1; // Reset to first page
+    loadMedia(1);
+    window.scrollTo(0, 0);
+});
+
+document.getElementById('clearFilters').addEventListener('click', async () => {
+    currentFilters.year = null;
+    currentFilters.month = null;
+    currentFilters.day = null;
+    currentPage = 1;
+    document.getElementById('yearFilter').value = '';
+    document.getElementById('monthFilter').value = '';
+    document.getElementById('dayFilter').value = '';
+    await loadFilterOptions();
+    loadMedia(1);
+    window.scrollTo(0, 0);
 });
 
 // Initialize

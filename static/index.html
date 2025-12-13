@@ -35,6 +35,21 @@
             <div id="uploadProgress" class="upload-progress hidden"></div>
         </div>
 
+        <div class="filter-section">
+            <div class="filter-controls">
+                <select id="yearFilter" class="filter-select">
+                    <option value="">Any Year</option>
+                </select>
+                <select id="monthFilter" class="filter-select" disabled>
+                    <option value="">Any Month</option>
+                </select>
+                <select id="dayFilter" class="filter-select" disabled>
+                    <option value="">Any Day</option>
+                </select>
+                <button id="clearFilters" class="clear-filters-btn">Clear</button>
+            </div>
+        </div>
+
         <div id="gallery" class="gallery-grid"></div>
         
         <div id="pagination" class="pagination"></div>

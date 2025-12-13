@@ -221,6 +221,42 @@ def check_auth():
         return jsonify({'authenticated': True, 'username': session.get('username')})
     return jsonify({'authenticated': False}), 401
 
+@app.route('/api/filter-options', methods=['GET'])
+def get_filter_options():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    year = request.args.get('year', type=int)
+    month = request.args.get('month', type=int)
+    
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    
+    # Get available years
+    c.execute("SELECT DISTINCT strftime('%Y', created_at) as year FROM media ORDER BY year DESC")
+    years = [row[0] for row in c.fetchall()]
+    
+    months = []
+    days = []
+    
+    # Get available months for selected year
+    if year is not None:
+        c.execute("SELECT DISTINCT strftime('%m', created_at) as month FROM media WHERE strftime('%Y', created_at) = ? ORDER BY month DESC", (str(year),))
+        months = [int(row[0]) for row in c.fetchall()]
+        
+        # Get available days for selected year and month
+        if month is not None:
+            c.execute("SELECT DISTINCT strftime('%d', created_at) as day FROM media WHERE strftime('%Y', created_at) = ? AND strftime('%m', created_at) = ? ORDER BY day DESC", (str(year), f"{month:02d}"))
+            days = [int(row[0]) for row in c.fetchall()]
+    
+    conn.close()
+    
+    return jsonify({
+        'years': years,
+        'months': months,
+        'days': days
+    })
+
 @app.route('/api/media', methods=['GET'])
 def get_media():
     if 'user_id' not in session:
@@ -228,19 +264,39 @@ def get_media():
     
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
+    year = request.args.get('year', type=int)
+    month = request.args.get('month', type=int)
+    day = request.args.get('day', type=int)
     
     conn = sqlite3.connect('gallery.db')
     c = conn.cursor()
     
+    # Build WHERE clause for date filtering
+    where_clauses = []
+    params = []
+    
+    if year is not None:
+        where_clauses.append("strftime('%Y', created_at) = ?")
+        params.append(str(year))
+        if month is not None:
+            where_clauses.append("strftime('%m', created_at) = ?")
+            params.append(f"{month:02d}")
+            if day is not None:
+                where_clauses.append("strftime('%d', created_at) = ?")
+                params.append(f"{day:02d}")
+    
+    where_clause = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    
     # Get total count
-    c.execute('SELECT COUNT(*) FROM media')
+    c.execute(f'SELECT COUNT(*) FROM media {where_clause}', params)
     total = c.fetchone()[0]
     
     # Get paginated results
     offset = (page - 1) * per_page
-    c.execute('''SELECT id, filename, filepath, file_type, created_at, uploaded_at, size, thumbnail_path
-                 FROM media ORDER BY created_at DESC LIMIT ? OFFSET ?''',
-              (per_page, offset))
+    query_params = params + [per_page, offset]
+    c.execute(f'''SELECT id, filename, filepath, file_type, created_at, uploaded_at, size, thumbnail_path
+                 FROM media {where_clause} ORDER BY created_at DESC LIMIT ? OFFSET ?''',
+              query_params)
     
     media_list = []
     for row in c.fetchall():
