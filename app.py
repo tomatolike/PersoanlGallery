@@ -93,14 +93,6 @@ def ensure_user_directories(username):
 # Ensure admin directories exist
 ensure_user_directories(ADMIN_USERNAME)
 
-# Ensure directories exist for all existing users in database
-conn = sqlite3.connect('gallery.db')
-c = conn.cursor()
-c.execute('SELECT username FROM users')
-for row in c.fetchall():
-    ensure_user_directories(row[0])
-conn.close()
-
 # Database setup
 def init_db():
     conn = sqlite3.connect('gallery.db')
@@ -772,6 +764,17 @@ def delete_user(username):
 
 if __name__ == '__main__':
     init_db()
+    
+    # Ensure directories exist for all existing users in database
+    conn = sqlite3.connect('gallery.db')
+    c = conn.cursor()
+    try:
+        c.execute('SELECT username FROM users')
+        for row in c.fetchall():
+            ensure_user_directories(row[0])
+    except sqlite3.OperationalError:
+        pass  # Table might not exist yet, but init_db() should have created it
+    conn.close()
     
     # Print configuration info
     print(f"Configuration loaded from {CONFIG_FILE}")
