@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Personal Gallery</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="loginScreen" class="screen">
+        <div class="login-container">
+            <h1>Personal Gallery</h1>
+            <form id="loginForm">
+                <input type="text" id="username" placeholder="Username" required autocomplete="username">
+                <input type="password" id="password" placeholder="Password" required autocomplete="current-password">
+                <button type="submit">Login</button>
+            </form>
+            <div id="loginError" class="error-message"></div>
+        </div>
+    </div>
+
+    <!-- Main Gallery Screen -->
+    <div id="galleryScreen" class="screen hidden">
+        <header>
+            <h1>Personal Gallery</h1>
+            <button id="logoutBtn" class="logout-btn">Logout</button>
+        </header>
+
+        <div class="upload-section">
+            <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
+            <button id="uploadBtn" class="upload-btn">Upload Media</button>
+            <div id="uploadProgress" class="upload-progress hidden"></div>
+        </div>
+
+        <div id="gallery" class="gallery-grid"></div>
+        
+        <div id="pagination" class="pagination"></div>
+        
+        <div id="loading" class="loading hidden">Loading...</div>
+    </div>
+
+    <!-- Media Viewer -->
+    <div id="mediaViewer" class="media-viewer hidden">
+        <button class="close-btn" id="closeViewer">&times;</button>
+        <div class="viewer-content">
+            <img id="viewerImage" class="viewer-media hidden" alt="Full size image">
+            <video id="viewerVideo" class="viewer-media hidden" controls autoplay></video>
+        </div>
+        <div class="viewer-nav">
+            <button id="prevBtn" class="nav-btn">&#8249;</button>
+            <button id="nextBtn" class="nav-btn">&#8250;</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
