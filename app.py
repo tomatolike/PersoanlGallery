@@ -20,6 +20,9 @@ import threading
 import time
 from pathlib import Path
 
+# Database lock for thread-safe access
+db_lock = threading.Lock()
+
 # Load configuration
 CONFIG_FILE = 'config.json'
 
@@ -217,14 +220,17 @@ def generate_thumbnail(filepath, media_type, output_path):
 
 def scan_media_directory():
     """Scan all user media directories for files and add them to database"""
-    conn = sqlite3.connect('gallery.db')
-    c = conn.cursor()
-    
-    # Get all usernames (admin + database users)
-    usernames = [ADMIN_USERNAME]
-    c.execute('SELECT username FROM users')
-    for row in c.fetchall():
-        usernames.append(row[0])
+    print("Scanning media directory")
+    with db_lock:
+        # Get all usernames (admin + database users)
+        conn = sqlite3.connect('gallery.db')
+        c = conn.cursor()
+        
+        usernames = [ADMIN_USERNAME]
+        c.execute('SELECT username FROM users')
+        for row in c.fetchall():
+            usernames.append(row[0])
+        conn.close()
     
     total_added = 0
     # Scan each user's directory
@@ -241,6 +247,8 @@ def scan_media_directory():
             
         added_count = 0
         updated_count = 0
+        batch_operations = []  # Store operations to batch commit
+        
         for file_path in media_dir.rglob('*'):
             if added_count + updated_count > 100:
                 break
@@ -250,10 +258,6 @@ def scan_media_directory():
                 if not media_type:
                     continue
                 
-                # Check if already in database
-                c.execute('SELECT id, thumbnail_path FROM media WHERE filepath = ?', (filepath_str,))
-                existing_record = c.fetchone()
-                
                 # Generate thumbnail path
                 thumbnail_filename = f"{file_path.stem}_thumb.jpg"
                 user_thumbnail_path = os.path.join(thumbnail_path, thumbnail_filename)
@@ -261,8 +265,16 @@ def scan_media_directory():
                 # Ensure thumbnail directory exists
                 os.makedirs(thumbnail_path, exist_ok=True)
                 
+                # Check if already in database (with lock for thread safety)
+                with db_lock:
+                    conn = sqlite3.connect('gallery.db', timeout=10.0)
+                    c = conn.cursor()
+                    c.execute('SELECT id, thumbnail_path FROM media WHERE filepath = ?', (filepath_str,))
+                    existing_record = c.fetchone()
+                    conn.close()
+                
                 if existing_record is None:
-                    # New file - add to database
+                    # New file - prepare for insertion
                     stat = file_path.stat()
                     size = stat.st_size
                     created_at = datetime.fromtimestamp(stat.st_mtime)
@@ -271,10 +283,8 @@ def scan_media_directory():
                     if not os.path.exists(user_thumbnail_path):
                         generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
                     
-                    # Add to database
-                    c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                             (file_path.name, filepath_str, media_type, created_at, size, user_thumbnail_path, username))
+                    # Add to batch operations
+                    batch_operations.append(('INSERT', file_path.name, filepath_str, media_type, created_at, size, user_thumbnail_path, username))
                     added_count += 1
                 else:
                     # File exists in database - check if thumbnail needs to be regenerated
@@ -284,10 +294,32 @@ def scan_media_directory():
                     if thumbnail_missing:
                         # Regenerate thumbnail
                         generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
-                        # Update database with new thumbnail path
-                        c.execute('UPDATE media SET thumbnail_path = ? WHERE filepath = ?', 
-                                 (user_thumbnail_path, filepath_str))
+                        # Add to batch operations
+                        batch_operations.append(('UPDATE', user_thumbnail_path, filepath_str))
                         updated_count += 1
+        
+        # Commit batch operations
+        if batch_operations:
+            with db_lock:
+                conn = sqlite3.connect('gallery.db', timeout=10.0)
+                c = conn.cursor()
+                try:
+                    for op in batch_operations:
+                        if op[0] == 'INSERT':
+                            _, filename, filepath, file_type, created_at, size, thumb_path, owner = op
+                            c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
+                                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                                     (filename, filepath, file_type, created_at, size, thumb_path, owner))
+                        elif op[0] == 'UPDATE':
+                            _, thumb_path, filepath = op
+                            c.execute('UPDATE media SET thumbnail_path = ? WHERE filepath = ?', 
+                                     (thumb_path, filepath))
+                    conn.commit()
+                except sqlite3.OperationalError as e:
+                    print(f"Database error during scan for {username}: {e}")
+                    conn.rollback()
+                finally:
+                    conn.close()
         
         total_added += added_count
         if added_count > 0 or updated_count > 0:
@@ -297,9 +329,6 @@ def scan_media_directory():
             if updated_count > 0:
                 msg += f" Regenerated {updated_count} thumbnails."
             print(msg)
-    
-    conn.commit()
-    conn.close()
 
 def periodic_scan():
     """Periodically scan the media directory"""
