@@ -244,6 +244,36 @@ header h1 {
     background-color: #555;
 }
 
+.per-page-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.per-page-controls label {
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.per-page-select {
+    padding: 0.5rem;
+    border: 2px solid var(--border-color);
+    border-radius: 5px;
+    font-size: 0.9rem;
+    background-color: white;
+    color: var(--text-color);
+    cursor: pointer;
+    transition: border-color 0.3s;
+}
+
+.per-page-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
 @media (max-width: 480px) {
     .filter-controls {
         flex-direction: column;
@@ -254,6 +284,15 @@ header h1 {
     }
     
     .clear-filters-btn {
+        width: 100%;
+    }
+    
+    .per-page-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .per-page-select {
         width: 100%;
     }
 }

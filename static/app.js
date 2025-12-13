@@ -245,9 +245,13 @@ async function loadMedia(page = 1) {
     loading.classList.remove('hidden');
     pagination.innerHTML = '';
     
+    // Get per page value from selector
+    const perPageSelect = document.getElementById('perPageSelect');
+    const perPage = parseInt(perPageSelect.value) || 50;
+    
     try {
         // Build query string with filters and gallery owner
-        let url = `/api/media?page=${page}&per_page=20&owner=${currentGalleryOwner}`;
+        let url = `/api/media?page=${page}&per_page=${perPage}&owner=${currentGalleryOwner}`;
         if (currentFilters.year !== null) {
             url += `&year=${currentFilters.year}`;
             if (currentFilters.month !== null) {
@@ -567,6 +571,13 @@ fileInput.addEventListener('change', async (e) => {
         uploadBtn.disabled = false;
         fileInput.value = '';
     }
+});
+
+// Per page selector handler
+document.getElementById('perPageSelect').addEventListener('change', () => {
+    currentPage = 1; // Reset to first page when changing per page
+    loadMedia(1);
+    window.scrollTo(0, 0);
 });
 
 // Filter event handlers
