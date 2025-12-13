@@ -7,6 +7,13 @@ from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIC_SUPPORT = True
+except ImportError:
+    HEIC_SUPPORT = False
+    print("Warning: pillow-heif not available. HEIC/HEIF files will not be supported.")
 import sqlite3
 import json
 import threading
@@ -161,15 +168,37 @@ def get_media_type(filename):
 def generate_thumbnail(filepath, media_type, output_path):
     try:
         if media_type == 'image':
-            img = Image.open(filepath)
-            img.thumbnail((400, 400), Image.Resampling.LANCZOS)
-            # Convert RGBA to RGB if necessary
-            if img.mode == 'RGBA':
-                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
-                rgb_img.paste(img, mask=img.split()[3])
-                img = rgb_img
-            img.save(output_path, 'JPEG', quality=85)
-            return True
+            # Check if it's a HEIC/HEIF file
+            file_ext = os.path.splitext(filepath)[1].lower()
+            is_heic = file_ext in ['.heic', '.heif']
+            
+            if is_heic and not HEIC_SUPPORT:
+                print(f"Warning: HEIC support not available, creating placeholder for {filepath}")
+                # Create a placeholder thumbnail for HEIC files when support is not available
+                img = Image.new('RGB', (400, 400), color=(200, 200, 200))
+                img.save(output_path, 'JPEG')
+                return True
+            
+            try:
+                img = Image.open(filepath)
+                img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                # Convert RGBA to RGB if necessary
+                if img.mode == 'RGBA':
+                    rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                    rgb_img.paste(img, mask=img.split()[3])
+                    img = rgb_img
+                elif img.mode not in ('RGB', 'L'):
+                    # Convert other modes (like P, CMYK, etc.) to RGB
+                    img = img.convert('RGB')
+                img.save(output_path, 'JPEG', quality=85)
+                return True
+            except Exception as img_error:
+                # If image opening fails (e.g., corrupted file, unsupported format)
+                print(f"Error opening image {filepath}: {img_error}")
+                # Create a placeholder thumbnail
+                img = Image.new('RGB', (400, 400), color=(150, 150, 150))
+                img.save(output_path, 'JPEG')
+                return True
         elif media_type == 'video':
             # For videos, we'll create a placeholder or use first frame
             # In production, use ffmpeg for video thumbnails
@@ -178,7 +207,13 @@ def generate_thumbnail(filepath, media_type, output_path):
             return True
     except Exception as e:
         print(f"Error generating thumbnail: {e}")
-        return False
+        # Create a fallback placeholder on any error
+        try:
+            img = Image.new('RGB', (400, 400), color=(150, 150, 150))
+            img.save(output_path, 'JPEG')
+            return True
+        except:
+            return False
 
 def scan_media_directory():
     """Scan all user media directories for files and add them to database"""
@@ -205,43 +240,64 @@ def scan_media_directory():
             continue
             
         added_count = 0
+        updated_count = 0
         for file_path in media_dir.rglob('*'):
             if file_path.is_file() and allowed_file(file_path.name):
                 filepath_str = str(file_path)
+                media_type = get_media_type(file_path.name)
+                if not media_type:
+                    continue
+                
                 # Check if already in database
-                c.execute('SELECT id FROM media WHERE filepath = ?', (filepath_str,))
-                if c.fetchone() is None:
-                    media_type = get_media_type(file_path.name)
-                    if media_type:
-                        # Get file stats
-                        stat = file_path.stat()
-                        size = stat.st_size
-                        created_at = datetime.fromtimestamp(stat.st_mtime)
-                        
-                        # Generate thumbnail path
-                        thumbnail_filename = f"{file_path.stem}_thumb.jpg"
-                        user_thumbnail_path = os.path.join(thumbnail_path, thumbnail_filename)
-                        
-                        # Ensure thumbnail directory exists
-                        os.makedirs(thumbnail_path, exist_ok=True)
-                        
-                        # Generate thumbnail if it doesn't exist
-                        if not os.path.exists(user_thumbnail_path):
-                            generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
-                        
-                        # Add to database with owner
-                        c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
-                                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                                 (file_path.name, filepath_str, media_type, created_at, size, user_thumbnail_path, username))
-                        added_count += 1
+                c.execute('SELECT id, thumbnail_path FROM media WHERE filepath = ?', (filepath_str,))
+                existing_record = c.fetchone()
+                
+                # Generate thumbnail path
+                thumbnail_filename = f"{file_path.stem}_thumb.jpg"
+                user_thumbnail_path = os.path.join(thumbnail_path, thumbnail_filename)
+                
+                # Ensure thumbnail directory exists
+                os.makedirs(thumbnail_path, exist_ok=True)
+                
+                if existing_record is None:
+                    # New file - add to database
+                    stat = file_path.stat()
+                    size = stat.st_size
+                    created_at = datetime.fromtimestamp(stat.st_mtime)
+                    
+                    # Generate thumbnail
+                    if not os.path.exists(user_thumbnail_path):
+                        generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
+                    
+                    # Add to database
+                    c.execute('''INSERT INTO media (filename, filepath, file_type, created_at, size, thumbnail_path, owner_username)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                             (file_path.name, filepath_str, media_type, created_at, size, user_thumbnail_path, username))
+                    added_count += 1
+                else:
+                    # File exists in database - check if thumbnail needs to be regenerated
+                    existing_thumbnail_path = existing_record[1]
+                    thumbnail_missing = not existing_thumbnail_path or not os.path.exists(existing_thumbnail_path)
+                    
+                    if thumbnail_missing:
+                        # Regenerate thumbnail
+                        generate_thumbnail(filepath_str, media_type, user_thumbnail_path)
+                        # Update database with new thumbnail path
+                        c.execute('UPDATE media SET thumbnail_path = ? WHERE filepath = ?', 
+                                 (user_thumbnail_path, filepath_str))
+                        updated_count += 1
+        
         total_added += added_count
-        if added_count > 0:
-            print(f"Scan completed for {username}. Added {added_count} new media files.")
+        if added_count > 0 or updated_count > 0:
+            msg = f"Scan completed for {username}."
+            if added_count > 0:
+                msg += f" Added {added_count} new media files."
+            if updated_count > 0:
+                msg += f" Regenerated {updated_count} thumbnails."
+            print(msg)
     
     conn.commit()
     conn.close()
-    if total_added > 0:
-        print(f"Total scan completed. Added {total_added} new media files.")
 
 def periodic_scan():
     """Periodically scan the media directory"""
