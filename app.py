@@ -1,6 +1,8 @@
 import os
 import hashlib
 import secrets
+import subprocess
+import json
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, session, send_file, send_from_directory
 from flask_session import Session
@@ -168,6 +170,23 @@ def get_media_type(filename):
         return 'video'
     return None
 
+def generate_video_thumbnail(video_path, output_path):
+    try:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", video_path,
+            "-ss", "00:00:01",
+            "-vframes", "1",
+            "-vf", "scale=400:-1",
+            output_path
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except Exception as e:
+        print(f"ffmpeg thumbnail failed: {e}")
+        return False
+
 def generate_thumbnail(filepath, media_type, output_path):
     try:
         if media_type == 'image':
@@ -205,8 +224,7 @@ def generate_thumbnail(filepath, media_type, output_path):
         elif media_type == 'video':
             # For videos, we'll create a placeholder or use first frame
             # In production, use ffmpeg for video thumbnails
-            img = Image.new('RGB', (400, 300), color=(100, 100, 100))
-            img.save(output_path, 'JPEG')
+            generate_video_thumbnail(filepath, output_path)
             return True
     except Exception as e:
         print(f"Error generating thumbnail: {e}")
@@ -217,6 +235,28 @@ def generate_thumbnail(filepath, media_type, output_path):
             return True
         except:
             return False
+
+def get_video_creation_time(path):
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_format",
+            path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        data = json.loads(result.stdout)
+        tags = data.get("format", {}).get("tags", {})
+        ct = tags.get("creation_time")
+        if ct:
+            return datetime.fromisoformat(ct.replace("Z", "+00:00"))
+    except Exception as e:
+        print(f"ffprobe failed: {e}")
+
+    # Fallback
+    stat = os.stat(path)
+    return datetime.fromtimestamp(stat.st_mtime)
 
 def scan_media_directory():
     """Scan all user media directories for files and add them to database"""
@@ -275,9 +315,12 @@ def scan_media_directory():
                 
                 if existing_record is None:
                     # New file - prepare for insertion
-                    stat = file_path.stat()
-                    size = stat.st_size
-                    created_at = datetime.fromtimestamp(stat.st_mtime)
+                    created_at = None
+                    if media_type == 'video':
+                        created_at = get_video_creation_time(filepath_str)
+                    else:
+                        created_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    size = file_path.stat().st_size
                     
                     # Generate thumbnail
                     if not os.path.exists(user_thumbnail_path):
